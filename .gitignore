@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Secrets
+.env
+*.pem
+
+# Training outputs
+logs/
+generated_images/
+outputs/
+checkpoints/
+
+# Datasets and large 3D files
+dataset/
+datasets/
+*.mrc
+*.mrcs
+
+# Editor files
+.vscode/
