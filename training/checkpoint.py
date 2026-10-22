@@ -35,7 +35,10 @@ from losses import GradientLoss3D, SpectralLoss3D, TVLoss3D
 from utils import set_seed, get_device, ensure_dirs, count_parameters, save_checkpoint
 
 def main():
+    # ============================================================
     # SETUP
+    # ============================================================
+
     set_seed(42)
     device = get_device()
     ensure_dirs(MODEL_PATH)
@@ -48,7 +51,10 @@ def main():
         print("GPU:", torch.cuda.get_device_name(0))
     print()
 
+    # ============================================================
     # DATASET
+    # ============================================================
+
     dataset = PairedMRCDataset(
         lr_path=LR_PATH,
         hr_path=HR_PATH,
@@ -67,7 +73,10 @@ def main():
     print("Training volumes:", len(dataset))
     print()
 
+    # ============================================================
     # MODELS
+    # ============================================================
+
     generator = Generator(
         img_feat=IMG_FEAT,
         n_feats=N_FEATS,
@@ -85,15 +94,20 @@ def main():
     print("Discriminator parameters:", count_parameters(discriminator))
     print()
 
-    
+    # ============================================================
     # LOSSES
+    # ============================================================
+
     mse_loss = nn.MSELoss()
     bce_loss = nn.BCELoss()
     gradient_loss = GradientLoss3D()
     spectral_loss = SpectralLoss3D()
     tv_loss = TVLoss3D()
 
+    # ============================================================
     # OPTIMIZERS
+    # ============================================================
+
     g_optimizer = optim.Adam(
         generator.parameters(),
         lr=LEARNING_RATE
@@ -110,8 +124,10 @@ def main():
         gamma=0.1
     )
 
-   
+    # ============================================================
     # CHECKPOINT LOADING
+    # ============================================================
+    
     LATEST_CHECKPOINT = os.path.join(MODEL_PATH, "latest_checkpoint.pt")
     
     start_phase = 1
@@ -144,7 +160,10 @@ def main():
         print("No checkpoint found. Starting training from scratch.")
         print()
 
+    # ============================================================
     # PHASE 1: MSE PRE-TRAINING
+    # ============================================================
+
     if start_phase == 1:
         print("=" * 60)
         print("PHASE 1: GENERATOR PRE-TRAINING")
@@ -187,7 +206,9 @@ def main():
         start_phase = 2
         start_epoch = 0
 
+    # ============================================================
     # PHASE 2: ADVERSARIAL FINE-TUNING
+    # ============================================================
 
     if start_phase == 2:
         print("=" * 60)
@@ -286,9 +307,27 @@ def main():
                 'scheduler': scheduler.state_dict()
             }, LATEST_CHECKPOINT)
 
+        # ============================================================
         # SAVE FINAL MODELS
+        # ============================================================
+
         save_checkpoint(generator, GENERATOR_FINAL)
         save_checkpoint(discriminator, DISCRIMINATOR_FINAL)
+
+        # Save checkpoint 300 (100 training + 200 fine tuning)
+        total_epochs = PRE_TRAIN_EPOCH + FINE_TRAIN_EPOCH
+        checkpoint_filename = f"checkpoint_{total_epochs}.pt"
+        checkpoint_path = os.path.join(MODEL_PATH, checkpoint_filename)
+        torch.save({
+            'phase': 2,
+            'epoch': FINE_TRAIN_EPOCH - 1,
+            'total_epochs': total_epochs,
+            'generator': generator.state_dict(),
+            'discriminator': discriminator.state_dict(),
+            'g_optimizer': g_optimizer.state_dict(),
+            'd_optimizer': d_optimizer.state_dict(),
+            'scheduler': scheduler.state_dict()
+        }, checkpoint_path)
 
         print()
         print("=" * 60)

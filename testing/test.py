@@ -19,8 +19,10 @@ sys.path.append(
 from srgan_model import Generator
 
 
-
+# ============================================================
 # PATHS
+# ============================================================
+
 PROJECT_ROOT = os.path.dirname(
     os.path.dirname(
         os.path.abspath(__file__)
@@ -43,7 +45,10 @@ MODEL_PATH = os.path.join(
     "pre_trained_model_final.pt"
 )
 
+
+# ============================================================
 # SETTINGS
+# ============================================================
 
 SCALE = 4
 
@@ -55,7 +60,11 @@ TILE_SIZE = 32
 
 OVERLAP = 8
 
+
+# ============================================================
 # DEVICE
+# ============================================================
+
 device = torch.device(
     "cuda"
     if torch.cuda.is_available()
@@ -80,7 +89,10 @@ if device.type == "cuda":
 
 print()
 
+
+# ============================================================
 # LOAD GENERATOR
+# ============================================================
 
 generator = Generator(
     img_feat=1,
@@ -94,9 +106,12 @@ checkpoint = torch.load(
     map_location=device
 )
 
-generator.load_state_dict(
-    checkpoint
-)
+if isinstance(checkpoint, dict) and 'generator' in checkpoint:
+    generator.load_state_dict(checkpoint['generator'])
+elif isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+    generator.load_state_dict(checkpoint['state_dict'])
+else:
+    generator.load_state_dict(checkpoint)
 
 generator.eval()
 
@@ -106,7 +121,10 @@ print(
 
 print()
 
+
+# ============================================================
 # LOAD MRC
+# ============================================================
 
 def load_mrc(path):
 
@@ -129,7 +147,10 @@ def load_mrc(path):
 
     return data, voxel_size
 
+
+# ============================================================
 # NORMALIZE
+# ============================================================
 
 def normalize(volume):
 
@@ -156,7 +177,10 @@ def normalize(volume):
         np.float32
     )
 
+
+# ============================================================
 # TILED INFERENCE
+# ============================================================
 
 @torch.no_grad()
 def tiled_inference(volume):
@@ -324,7 +348,9 @@ def tiled_inference(volume):
     return output, output_path
 
 
+# ============================================================
 # PROCESS ONE FILE
+# ============================================================
 
 def process_file(input_file):
 
@@ -423,7 +449,10 @@ def process_file(input_file):
         "Saved successfully."
     )
 
+
+# ============================================================
 # MAIN
+# ============================================================
 
 def main():
 
