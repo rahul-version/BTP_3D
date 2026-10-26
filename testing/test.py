@@ -42,14 +42,9 @@ RESULT_PATH = os.path.join(
 MODEL_PATH = os.path.join(
     PROJECT_ROOT,
     "model",
-    "pre_trained_model_final.pt"
+    "checkpoint_300.pt"
 )
-
-
-# ============================================================
 # SETTINGS
-# ============================================================
-
 SCALE = 4
 
 N_FEATS = 64
@@ -60,11 +55,7 @@ TILE_SIZE = 32
 
 OVERLAP = 8
 
-
-# ============================================================
 # DEVICE
-# ============================================================
-
 device = torch.device(
     "cuda"
     if torch.cuda.is_available()
@@ -90,10 +81,8 @@ if device.type == "cuda":
 print()
 
 
-# ============================================================
-# LOAD GENERATOR
-# ============================================================
 
+# LOAD GENERATOR
 generator = Generator(
     img_feat=1,
     n_feats=N_FEATS,
@@ -121,11 +110,7 @@ print(
 
 print()
 
-
-# ============================================================
 # LOAD MRC
-# ============================================================
-
 def load_mrc(path):
 
     with mrcfile.open(
@@ -147,11 +132,7 @@ def load_mrc(path):
 
     return data, voxel_size
 
-
-# ============================================================
 # NORMALIZE
-# ============================================================
-
 def normalize(volume):
 
     vmin = volume.min()
@@ -177,11 +158,7 @@ def normalize(volume):
         np.float32
     )
 
-
-# ============================================================
 # TILED INFERENCE
-# ============================================================
-
 @torch.no_grad()
 def tiled_inference(volume):
 
@@ -347,10 +324,7 @@ def tiled_inference(volume):
 
     return output, output_path
 
-
-# ============================================================
-# PROCESS ONE FILE
-# ============================================================
+# PROCESS ONE FIL
 
 def process_file(input_file):
 
@@ -449,10 +423,7 @@ def process_file(input_file):
         "Saved successfully."
     )
 
-
-# ============================================================
 # MAIN
-# ============================================================
 
 def main():
 

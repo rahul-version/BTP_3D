@@ -35,9 +35,7 @@ from losses import GradientLoss3D, SpectralLoss3D, TVLoss3D
 from utils import set_seed, get_device, ensure_dirs, count_parameters, save_checkpoint
 
 def main():
-    # ============================================================
     # SETUP
-    # ============================================================
 
     set_seed(42)
     device = get_device()
@@ -51,9 +49,7 @@ def main():
         print("GPU:", torch.cuda.get_device_name(0))
     print()
 
-    # ============================================================
     # DATASET
-    # ============================================================
 
     dataset = PairedMRCDataset(
         lr_path=LR_PATH,
@@ -73,9 +69,7 @@ def main():
     print("Training volumes:", len(dataset))
     print()
 
-    # ============================================================
     # MODELS
-    # ============================================================
 
     generator = Generator(
         img_feat=IMG_FEAT,
@@ -94,9 +88,7 @@ def main():
     print("Discriminator parameters:", count_parameters(discriminator))
     print()
 
-    # ============================================================
     # LOSSES
-    # ============================================================
 
     mse_loss = nn.MSELoss()
     bce_loss = nn.BCELoss()
@@ -104,9 +96,7 @@ def main():
     spectral_loss = SpectralLoss3D()
     tv_loss = TVLoss3D()
 
-    # ============================================================
     # OPTIMIZERS
-    # ============================================================
 
     g_optimizer = optim.Adam(
         generator.parameters(),
@@ -124,9 +114,7 @@ def main():
         gamma=0.1
     )
 
-    # ============================================================
     # CHECKPOINT LOADING
-    # ============================================================
     
     LATEST_CHECKPOINT = os.path.join(MODEL_PATH, "latest_checkpoint.pt")
     
@@ -161,9 +149,7 @@ def main():
         print("No checkpoint found. Starting training from scratch.")
         print()
 
-    # ============================================================
     # CYCLIC TRAINING LOOP
-    # ============================================================
 
     cycle = start_cycle
     target_cycle = start_cycle + 5
@@ -172,9 +158,7 @@ def main():
         print(f"STARTING CYCLE {cycle}")
         print(f"{'*' * 60}\n")
 
-        # ============================================================
         # PHASE 1: MSE PRE-TRAINING
-        # ============================================================
 
         if start_phase == 1:
             print("=" * 60)
@@ -225,9 +209,7 @@ def main():
             start_phase = 2
             start_epoch = 0
 
-        # ============================================================
         # PHASE 2: ADVERSARIAL FINE-TUNING
-        # ============================================================
 
         if start_phase == 2:
             print("=" * 60)

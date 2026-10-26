@@ -9,19 +9,15 @@ import torch
 import torch.nn.functional as F
 
 
-# ============================================================
-# DIRECTORY PATHS
-# ============================================================
 
+# PATHS
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_HR_DIR = os.path.join(SCRIPT_DIR, "../Dataset/HR")
 DEFAULT_LR_DIR = os.path.join(SCRIPT_DIR, "../Dataset/LR")
 
 
-# ============================================================
-# MRC I/O HELPERS
-# ============================================================
 
+# MRC I/O HELPERS
 def load_mrc(path):
     """
     Safely loads 3D volume data and voxel dimensions from an MRC file.
@@ -59,10 +55,8 @@ def save_mrc(output_path, volume, voxel_size):
         mrc.update_header_from_data()
 
 
-# ============================================================
-# NOISE AND DEGRADATION FUNCTIONS
-# ============================================================
 
+# NOISE AND DEGRADATION FUNCTIONS
 def add_gaussian_noise(volume, noise_level=0.05, relative=True):
     """
     Adds Additive White Gaussian Noise (AWGN) in float32 directly.
@@ -139,10 +133,7 @@ def apply_gaussian_blur_3d(volume, kernel_size=5, sigma=1.0):
     return out.squeeze().numpy().astype(np.float32)
 
 
-# ============================================================
 # DOWNSAMPLING FUNCTION
-# ============================================================
-
 def downsample_volume(volume, scale=4, method="area"):
     """
     Downsamples a 3D volume by integer scale factor (e.g. 4x).
@@ -199,10 +190,7 @@ def downsample_volume(volume, scale=4, method="area"):
         raise ValueError(f"Unknown downsampling method: {method}. Choose 'area' or 'trilinear'.")
 
 
-# ============================================================
 # SINGLE VOLUME PROCESSING PIPELINE
-# ============================================================
-
 def process_file(
     filename,
     hr_dir,
@@ -290,10 +278,8 @@ def process_file(
     gc.collect()
 
 
-# ============================================================
-# MAIN ENTRY POINT
-# ============================================================
 
+# MAIN 
 def main():
     parser = argparse.ArgumentParser(
         description="Generate 4x Low-Resolution (LR) Cryo-EM volumes from HR volumes with noise injection."
@@ -394,7 +380,7 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # Collect .mrc, .map, .ccp4, .mrcs files
+    # Collect files
     valid_extensions = (".mrc", ".map", ".ccp4", ".mrcs")
     if args.file:
         files = [args.file]
