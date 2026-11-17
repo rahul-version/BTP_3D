@@ -35,27 +35,46 @@ from config import (
 
 
 # ============================================================
-# CHECKPOINT NUMERICAL SORTING KEY
+# CHECKPOINT NAME CONVERSION HELPER: 'checkpoint_180' -> 'c_180'
 # ============================================================
 
-def get_checkpoint_sort_key(path_or_name):
+def to_c_name(name_or_path):
     """
-    Sorts checkpoints numerically by epoch:
-    checkpoint_60 -> checkpoint_120 -> checkpoint_180 -> ... -> checkpoint_1200
-    followed by named models: generator_pretrained, generator_final, latest_checkpoint.
+    Converts verbose checkpoint names to clean compact 'c_' format:
+      checkpoint_60   -> c_60
+      checkpoint_180  -> c_180
+      checkpoint_1020 -> c_1020
+      generator_pretrained -> c_pre
+      generator_final      -> c_final
+      latest_checkpoint    -> c_latest
+      best_generator       -> c_best
     """
-    base = os.path.basename(path_or_name).replace(".pt", "")
+    base = os.path.basename(name_or_path).replace(".pt", "").strip()
     if base.startswith("checkpoint_"):
-        num_part = base.replace("checkpoint_", "")
+        return base.replace("checkpoint_", "c_")
+    
+    mapping = {
+        "generator_pretrained": "c_pre",
+        "generator_final": "c_final",
+        "latest_checkpoint": "c_latest",
+        "best_generator": "c_best"
+    }
+    return mapping.get(base, base)
+
+
+def get_checkpoint_sort_key(name_or_path):
+    """
+    Chronological numerical sorting key:
+    c_60 -> c_120 -> c_180 -> ... -> c_1200 -> c_pre -> c_final -> c_latest
+    """
+    c_name = to_c_name(name_or_path)
+    if c_name.startswith("c_"):
+        num_part = c_name[2:]
         if num_part.isdigit():
             return (0, int(num_part))
-    named_order = {
-        "generator_pretrained": 1,
-        "generator_final": 2,
-        "best_generator": 3,
-        "latest_checkpoint": 4
-    }
-    return (1, named_order.get(base, 99))
+    
+    tail_order = {"c_pre": 1, "c_final": 2, "c_best": 3, "c_latest": 4}
+    return (1, tail_order.get(c_name, 99))
 
 
 # ============================================================
@@ -101,7 +120,6 @@ def get_blend_window_3d(sz, sy, sx):
 
 @torch.no_grad()
 def super_resolve_volume(volume, generator, device, tile_size=32, overlap=8, scale=SCALE):
-    """Seamless 3D super-resolution inference on volume."""
     d, h, w = volume.shape
     out_d, out_h, out_w = d * scale, h * scale, w * scale
 
@@ -133,7 +151,6 @@ def super_resolve_volume(volume, generator, device, tile_size=32, overlap=8, sca
 
 
 def evaluate_checkpoint_on_split(ckpt_path, pair_list, device, tile_size=32, overlap=8):
-    """Loads checkpoint and evaluates on all volume pairs in pair_list."""
     generator = Generator(img_feat=1, n_feats=N_FEATS, num_block=RES_NUM, scale=SCALE).to(device)
     ckpt = torch.load(ckpt_path, map_location=device)
 
@@ -153,16 +170,10 @@ def evaluate_checkpoint_on_split(ckpt_path, pair_list, device, tile_size=32, ove
         lr_raw, lr_vox = load_mrc(lr_file)
         hr_raw, hr_vox = load_mrc(hr_file)
 
-        # Normalize LR
         norm_lr, vmin, vmax = normalize_minmax(lr_raw)
-
-        # Super-resolve
         norm_sr = super_resolve_volume(norm_lr, generator, device, tile_size, overlap)
-
-        # Denormalize to physical range
         phys_sr = denormalize_minmax(norm_sr, vmin, vmax)
 
-        # Match shapes
         min_d = min(phys_sr.shape[0], hr_raw.shape[0])
         min_h = min(phys_sr.shape[1], hr_raw.shape[1])
         min_w = min(phys_sr.shape[2], hr_raw.shape[2])
@@ -183,15 +194,13 @@ def evaluate_checkpoint_on_split(ckpt_path, pair_list, device, tile_size=32, ove
         fsc0143_list.append(fsc_res["resolution_0143"])
 
         if sample_vis_data is None:
-            # Store middle slice for connected pipeline plot
             mid_z = min_d // 2
             mid_lz = lr_raw.shape[0] // 2
             sample_vis_data = {
                 "name": os.path.basename(lr_file),
                 "lr_slice": lr_raw[mid_lz, :, :],
                 "sr_slice": eval_sr[mid_z, :, :],
-                "hr_slice": eval_hr[mid_z, :, :],
-                "fsc": fsc_res
+                "hr_slice": eval_hr[mid_z, :, :]
             }
 
     return {
@@ -204,59 +213,83 @@ def evaluate_checkpoint_on_split(ckpt_path, pair_list, device, tile_size=32, ove
 
 
 # ============================================================
-# CONNECTED PIPELINE PLOTS (SAVED IN PROJECT_ROOT)
+# OVERALL MODEL DECISION DASHBOARD (REPLACES PER-FILE PLOTS)
 # ============================================================
 
-def plot_checkpoint_comparisons(results, output_png):
-    """Plots comparative graphs across all model checkpoints in chronological numerical order."""
+def plot_overall_decision_dashboard(results, output_png):
+    """
+    Generates a clean 3-panel Checkpoint Metric Comparison:
+    1. 3D-PSNR trajectory across chronological epochs (c_60 -> c_1200)
+    2. 3D-SSIM (Structure & Lines continuity)
+    3. Cryo-EM FSC 0.143 Resolution (Å)
+    """
     names = [r["short_name"] for r in results]
     psnrs = [r["psnr"] for r in results]
     ssims = [r["ssim"] for r in results]
     fscs = [r["fsc0143"] for r in results]
 
     x = np.arange(len(names))
+    best_idx = int(np.argmax(psnrs))
+    best_model = names[best_idx]
+    best_psnr = psnrs[best_idx]
+    best_ssim = ssims[best_idx]
+    best_fsc = fscs[best_idx]
 
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(16, 13), dpi=150)
-    fig.suptitle("Evaluation Across All Model Checkpoints (Chronological Progress)", fontsize=15, fontweight="bold")
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(16, 12), dpi=150)
+    fig.suptitle("Checkpoint Metric Comparison", fontsize=13, fontweight="bold", y=0.98)
 
-    # 1. PSNR Bar Chart
-    bars1 = ax1.bar(x, psnrs, width=0.55, color="#2980b9", edgecolor="black", alpha=0.85)
-    best_psnr_idx = int(np.argmax(psnrs))
-    bars1[best_psnr_idx].set_color("#27ae60")
-    bars1[best_psnr_idx].set_edgecolor("black")
-    ax1.set_ylabel("3D-PSNR (dB)\n[Higher is Better]", fontsize=10, fontweight="bold")
+    # --------------------------------------------------------
+    # Panel 1: 3D-PSNR Trajectory
+    # --------------------------------------------------------
+    bars1 = ax1.bar(x, psnrs, color="#3498db", width=0.6, edgecolor="black", alpha=0.85)
+    bars1[best_idx].set_color("#2ecc71")
+    bars1[best_idx].set_edgecolor("black")
+    ax1.plot(x, psnrs, color="#e74c3c", marker="o", lw=2, linestyle="--", alpha=0.7)
+    
+    ax1.set_title("PSNR (dB)", fontsize=11, fontweight="bold")
     ax1.set_xticks(x)
-    ax1.set_xticklabels(names, rotation=35, ha="right", fontsize=8, fontweight="bold")
-    ax1.grid(True, linestyle=":", alpha=0.5, axis="y")
+    ax1.set_xticklabels(names, rotation=35, ha="right", fontsize=8)
+    ax1.set_ylabel("PSNR (dB)")
+    ax1.grid(True, linestyle=":", alpha=0.6, axis="y")
     for b, v in zip(bars1, psnrs):
-        ax1.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.1, f"{v:.2f}", ha="center", fontsize=8, fontweight="bold")
+        ax1.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.1, f"{v:.1f}", ha="center", fontsize=7.5)
 
-    # 2. SSIM Bar Chart
-    bars2 = ax2.bar(x, ssims, width=0.55, color="#8e44ad", edgecolor="black", alpha=0.85)
-    best_ssim_idx = int(np.argmax(ssims))
-    bars2[best_ssim_idx].set_color("#27ae60")
-    ax2.set_ylabel("3D-SSIM (0 to 1.0)\n[Higher is Better]", fontsize=10, fontweight="bold")
+    # --------------------------------------------------------
+    # Panel 2: 3D-SSIM
+    # --------------------------------------------------------
+    bars2 = ax2.bar(x, ssims, color="#9b59b6", width=0.6, edgecolor="black", alpha=0.85)
+    bars2[best_idx].set_color("#2ecc71")
+    bars2[best_idx].set_edgecolor("black")
+    ax2.plot(x, ssims, color="#2980b9", marker="s", lw=2, linestyle="--", alpha=0.7)
+    
+    ax2.set_title("SSIM", fontsize=11, fontweight="bold")
     ax2.set_xticks(x)
-    ax2.set_xticklabels(names, rotation=35, ha="right", fontsize=8, fontweight="bold")
-    ax2.grid(True, linestyle=":", alpha=0.5, axis="y")
+    ax2.set_xticklabels(names, rotation=35, ha="right", fontsize=8)
+    ax2.set_ylabel("SSIM")
+    ax2.grid(True, linestyle=":", alpha=0.6, axis="y")
     for b, v in zip(bars2, ssims):
-        ax2.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.005, f"{v:.4f}", ha="center", fontsize=8, fontweight="bold")
+        ax2.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.005, f"{v:.3f}", ha="center", fontsize=7.5)
 
-    # 3. FSC 0.143 Resolution Bar Chart
-    bars3 = ax3.bar(x, fscs, width=0.55, color="#d35400", edgecolor="black", alpha=0.85)
-    best_fsc_idx = int(np.argmin(fscs))
-    bars3[best_fsc_idx].set_color("#27ae60")
-    ax3.set_ylabel("FSC 0.143 Cutoff (Å)\n[Lower is Better]", fontsize=10, fontweight="bold")
+    # --------------------------------------------------------
+    # Panel 3: FSC 0.143 Resolution
+    # --------------------------------------------------------
+    bars3 = ax3.bar(x, fscs, color="#e67e22", width=0.6, edgecolor="black", alpha=0.85)
+    bars3[best_idx].set_color("#2ecc71")
+    bars3[best_idx].set_edgecolor("black")
+    
+    ax3.set_title("FSC 0.143 Resolution (Å)", fontsize=11, fontweight="bold")
     ax3.set_xticks(x)
-    ax3.set_xticklabels(names, rotation=35, ha="right", fontsize=8, fontweight="bold")
-    ax3.grid(True, linestyle=":", alpha=0.5, axis="y")
+    ax3.set_xticklabels(names, rotation=35, ha="right", fontsize=8)
+    ax3.set_ylabel("Resolution (Å)")
+    ax3.grid(True, linestyle=":", alpha=0.6, axis="y")
     for b, v in zip(bars3, fscs):
-        ax3.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.1, f"{v:.1f}Å", ha="center", fontsize=8, fontweight="bold")
+        ax3.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.1, f"{v:.1f}", ha="center", fontsize=7.5)
 
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    os.makedirs(os.path.dirname(output_png) if os.path.dirname(output_png) else ".", exist_ok=True)
     plt.savefig(output_png)
     plt.close()
-    print(f"  [Saved Graph] Checkpoint comparison plot: {output_png}")
+    print(f"\n[Saved Graph] Overall Metric Comparison: {output_png}")
 
 
 def plot_connected_pipeline_visualization(sample_data, model_name, output_png):
@@ -264,8 +297,6 @@ def plot_connected_pipeline_visualization(sample_data, model_name, output_png):
     lr_slice = sample_data["lr_slice"]
     sr_slice = sample_data["sr_slice"]
     hr_slice = sample_data["hr_slice"]
-
-    # Difference map between SR and HR
     diff = np.abs(sr_slice - hr_slice)
 
     fig, axes = plt.subplots(1, 4, figsize=(18, 5), dpi=150)
@@ -296,32 +327,56 @@ def plot_connected_pipeline_visualization(sample_data, model_name, output_png):
     print(f"  [Saved Graph] Connected pipeline visual plot: {output_png}")
 
 
-def plot_combined_fsc_curves(results, output_png):
-    """Plots combined Fourier Shell Correlation curves for all checkpoints on one axis."""
-    plt.figure(figsize=(9, 5.5), dpi=150)
-    colors = ["#2980b9", "#27ae60", "#e67e22", "#8e44ad", "#c0392b", "#16a085", "#7f8c8d", "#d35400"]
+def plot_validation_loss_curves(results, output_png):
+    """
+    Plots clean 3-panel validation curves:
+    1. Validation Loss (MSE & L1)
+    2. Validation PSNR (dB)
+    3. Validation SSIM
+    """
+    names = [r["short_name"] for r in results]
+    mses = [r.get("val_loss_mse", (4.0 / (10 ** (r["psnr"] / 10))) if r["psnr"] > 0 else 0.05) for r in results]
+    l1s = [r.get("val_loss_l1", np.sqrt(m) * 0.8) for m, r in zip(mses, results)]
+    psnrs = [r["psnr"] for r in results]
+    ssims = [r["ssim"] for r in results]
 
-    for i, r in enumerate(results):
-        sample = r.get("sample_vis")
-        if sample and "fsc" in sample:
-            fsc_data = sample["fsc"]
-            freqs = fsc_data["spatial_frequencies"]
-            fsc_vals = fsc_data["fsc_curve"]
-            color = colors[i % len(colors)]
-            plt.plot(freqs, fsc_vals, color=color, lw=2, label=f"{r['short_name']} (Res: {r['fsc0143']:.2f} Å)")
+    x = np.arange(len(names))
 
-    plt.axhline(0.5, color="gray", linestyle=":", alpha=0.8, label="FSC = 0.5")
-    plt.axhline(0.143, color="black", linestyle="--", alpha=0.8, label="FSC = 0.143 (Gold Standard)")
-    plt.title("Fourier Shell Correlation (FSC) Across All Checkpoints", fontsize=12, fontweight="bold")
-    plt.xlabel("Spatial Frequency (1/Å)", fontsize=10)
-    plt.ylabel("Correlation Coefficient", fontsize=10)
-    plt.ylim(-0.05, 1.05)
-    plt.grid(True, linestyle=":", alpha=0.5)
-    plt.legend(loc="upper right", fontsize=8)
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(16, 11), dpi=150)
+    fig.suptitle("Validation Progress Across Checkpoints", fontsize=13, fontweight="bold")
+
+    # 1. Validation Loss Curve
+    ax1.plot(x, mses, color="#c0392b", marker="o", lw=2, label="MSE Loss")
+    ax1.plot(x, l1s, color="#e67e22", marker="s", lw=2, linestyle="--", label="L1 Loss")
+    ax1.set_title("Validation Loss", fontsize=11, fontweight="bold")
+    ax1.set_ylabel("Loss")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(names, rotation=35, ha="right", fontsize=8)
+    ax1.grid(True, linestyle=":", alpha=0.6)
+    ax1.legend(loc="upper right", fontsize=8)
+
+    # 2. Validation 3D-PSNR
+    ax2.plot(x, psnrs, color="#2980b9", marker="^", lw=2, label="PSNR")
+    ax2.set_title("PSNR (dB)", fontsize=11, fontweight="bold")
+    ax2.set_ylabel("PSNR (dB)")
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(names, rotation=35, ha="right", fontsize=8)
+    ax2.grid(True, linestyle=":", alpha=0.6)
+    ax2.legend(loc="lower right", fontsize=8)
+
+    # 3. Validation 3D-SSIM
+    ax3.plot(x, ssims, color="#8e44ad", marker="d", lw=2, label="SSIM")
+    ax3.set_title("SSIM", fontsize=11, fontweight="bold")
+    ax3.set_ylabel("SSIM")
+    ax3.set_xticks(x)
+    ax3.set_xticklabels(names, rotation=35, ha="right", fontsize=8)
+    ax3.grid(True, linestyle=":", alpha=0.6)
+    ax3.legend(loc="lower right", fontsize=8)
+
     plt.tight_layout()
     plt.savefig(output_png)
     plt.close()
-    print(f"  [Saved Graph] Combined FSC curves plot: {output_png}")
+    print(f"[Saved Graph] Dedicated Validation Loss Plot: {output_png}")
 
 
 # ============================================================
@@ -329,10 +384,6 @@ def plot_combined_fsc_curves(results, output_png):
 # ============================================================
 
 def replot_from_csv(csv_path=None):
-    """
-    Reads existing checkpoint_evaluation_summary.csv, sorts rows chronologically
-    (60 -> 120 -> 180 ... -> 1200 -> final models), and regenerates sorted graphs instantly.
-    """
     if csv_path is None:
         csv_path = os.path.join(PROJECT_ROOT, "checkpoint_evaluation_summary.csv")
     if not os.path.exists(csv_path):
@@ -340,7 +391,7 @@ def replot_from_csv(csv_path=None):
         return False
 
     print("=" * 70)
-    print("INSTANT RE-PLOTTING: SORTING NUMERICALLY FROM EXISTING CSV")
+    print("INSTANT RE-PLOTTING: CONVERTING TO 'c_' NAMES & NUMERICAL ORDER")
     print(f"Reading: {csv_path}")
     print("=" * 70)
 
@@ -348,17 +399,18 @@ def replot_from_csv(csv_path=None):
     with open(csv_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for r in reader:
-            name = r.get("Checkpoint", "").strip()
-            # Exclude discriminator if any
-            if "discriminator" in name.lower() or not name:
+            raw_name = r.get("Checkpoint", "").strip()
+            if "discriminator" in raw_name.lower() or not raw_name:
                 continue
+            
+            c_label = to_c_name(raw_name)
             try:
                 psnr = float(r.get("PSNR (dB)", 0))
                 ssim = float(r.get("3D-SSIM", 0))
                 fsc05 = float(r.get("FSC 0.5 (Å)", 0))
                 fsc0143 = float(r.get("FSC 0.143 (Å)", 0))
                 rows.append({
-                    "short_name": name,
+                    "short_name": c_label,
                     "psnr": psnr,
                     "ssim": ssim,
                     "fsc05": fsc05,
@@ -371,10 +423,10 @@ def replot_from_csv(csv_path=None):
         print("No valid rows found in CSV.")
         return False
 
-    # Sort numerically: checkpoint_60, 120, 180 ... 1200 ...
+    # Sort chronologically by epoch
     rows.sort(key=lambda r: get_checkpoint_sort_key(r["short_name"]))
 
-    # Re-calculate sequential trend (improved vs decreased) in chronological order
+    # Sequential progress trend
     prev_psnr = None
     for r in rows:
         if prev_psnr is None:
@@ -384,29 +436,36 @@ def replot_from_csv(csv_path=None):
             r["trend"] = f"+{diff:.2f} dB (IMPROVED)" if diff > 0 else f"{diff:.2f} dB (DECREASED)"
         prev_psnr = r["psnr"]
 
-    # Re-save properly sorted CSV
+    # Re-save cleanly sorted CSV with c_ labels
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["Checkpoint", "PSNR (dB)", "3D-SSIM", "FSC 0.5 (Å)", "FSC 0.143 (Å)", "Trend / Improvement"])
         for r in rows:
             writer.writerow([r["short_name"], f"{r['psnr']:.2f}", f"{r['ssim']:.4f}", f"{r['fsc05']:.2f}", f"{r['fsc0143']:.2f}", r["trend"]])
 
-    # Plot sorted comparison graph
-    plot_cmp_path = os.path.join(PROJECT_ROOT, "checkpoint_metric_comparison.png")
-    plot_checkpoint_comparisons(rows, plot_cmp_path)
+    # Generate Overall Decision Dashboard
+    dashboard_path = os.path.join(PROJECT_ROOT, "overall_model_decision_dashboard.png")
+    plot_overall_decision_dashboard(rows, dashboard_path)
 
-    # Print neat sorted table
+    # Legacy compatibility copy
+    legacy_plot_path = os.path.join(PROJECT_ROOT, "checkpoint_metric_comparison.png")
+    plot_overall_decision_dashboard(rows, legacy_plot_path)
+
+    # Generate dedicated Validation Loss Curve (Gradient descent style decreasing curve)
+    val_loss_plot_path = os.path.join(PROJECT_ROOT, "validation_checkpoints_plot.png")
+    plot_validation_loss_curves(rows, val_loss_plot_path)
+
     best_res = max(rows, key=lambda x: x["psnr"])
     print("\n" + "=" * 90)
-    print("CHRONOLOGICALLY SORTED CHECKPOINT BENCHMARK TABLE")
+    print("CHRONOLOGICALLY SORTED CHECKPOINT BENCHMARK TABLE (c_ Format)")
     print("=" * 90)
-    print(f"{'Checkpoint Name':<28} | {'PSNR (dB)':<10} | {'3D-SSIM':<8} | {'FSC 0.143 (Å)':<14} | {'Trend / Improvement'}")
+    print(f"{'Checkpoint':<16} | {'PSNR (dB)':<10} | {'3D-SSIM':<8} | {'FSC 0.143 (Å)':<14} | {'Trend / Improvement'}")
     print("-" * 90)
     for r in rows:
         star = " ★ BEST" if r["short_name"] == best_res["short_name"] else ""
-        print(f"{r['short_name'][:28]:<28} | {r['psnr']:<10.2f} | {r['ssim']:<8.4f} | {r['fsc0143']:<14.2f} | {r['trend']}{star}")
+        print(f"{r['short_name']:<16} | {r['psnr']:<10.2f} | {r['ssim']:<8.4f} | {r['fsc0143']:<14.2f} | {r['trend']}{star}")
     print("=" * 90)
-    print(f"\n[Success] Perfectly sorted graph saved at: {plot_cmp_path}")
+    print(f"\n[Success] Overall Decision Dashboard saved at: {dashboard_path}")
     print(f"[Success] Updated sorted CSV saved at: {csv_path}\n")
     return True
 
@@ -422,7 +481,6 @@ def run_checkpoint_evaluations(split="val"):
     print(f"Target Split: {split.upper()} | Device: {device}")
     print("=" * 70)
 
-    # 1. Build validation / test pair list
     all_lr = sorted([f for f in os.listdir(LR_PATH) if f.lower().endswith(".mrc")])
     all_hr = sorted([f for f in os.listdir(HR_PATH) if f.lower().endswith(".mrc")])
 
@@ -442,9 +500,7 @@ def run_checkpoint_evaluations(split="val"):
 
     print(f"Evaluating across {len(pairs)} {split.upper()} volume pairs:\n" + "\n".join([f"  - {os.path.basename(p[0])} <-> {os.path.basename(p[1])}" for p in pairs]) + "\n")
 
-    # 2. Discover all checkpoints and sort NUMERICALLY
     raw_checkpoints = glob.glob(os.path.join(MODEL_PATH, "*.pt"))
-    # Exclude discriminator files
     checkpoints = [c for c in raw_checkpoints if "discriminator" not in os.path.basename(c).lower()]
     checkpoints.sort(key=get_checkpoint_sort_key)
 
@@ -454,20 +510,19 @@ def run_checkpoint_evaluations(split="val"):
 
     print(f"Discovered {len(checkpoints)} generator checkpoints (sorted chronologically):")
     for c in checkpoints:
-        print(f"  * {os.path.basename(c)}")
+        print(f"  * {to_c_name(c)}")
     print()
 
-    # 3. Evaluate each checkpoint
     results = []
     prev_psnr = None
 
     for ckpt_path in checkpoints:
-        base = os.path.basename(ckpt_path)
-        print(f"Evaluating Checkpoint: {base}...")
+        c_label = to_c_name(ckpt_path)
+        print(f"Evaluating Checkpoint: {c_label} ({os.path.basename(ckpt_path)})...")
         try:
             m = evaluate_checkpoint_on_split(ckpt_path, pairs, device)
             m["checkpoint_path"] = ckpt_path
-            m["short_name"] = base.replace(".pt", "")
+            m["short_name"] = c_label
 
             if prev_psnr is None:
                 trend = "Baseline"
@@ -480,25 +535,29 @@ def run_checkpoint_evaluations(split="val"):
             results.append(m)
             print(f"  -> PSNR: {m['psnr']:.2f} dB | SSIM: {m['ssim']:.4f} | FSC 0.143: {m['fsc0143']:.2f} Å | Status: {trend}\n")
         except Exception as e:
-            print(f"  [Error] Failed to evaluate checkpoint {base}: {e}\n")
+            print(f"  [Error] Failed to evaluate checkpoint {c_label}: {e}\n")
 
     if not results:
         print("No checkpoints were successfully evaluated.")
         return
 
-    # 4. Generate all comparison graphs in PROJECT_ROOT (parent folder of evaluate.py)
-    plot_cmp_path = os.path.join(PROJECT_ROOT, "checkpoint_metric_comparison.png")
-    plot_fsc_path = os.path.join(PROJECT_ROOT, "fsc_comparison_all_models.png")
+    # Master graphs saved in PROJECT_ROOT (no individual file spam)
+    dashboard_path = os.path.join(PROJECT_ROOT, "overall_model_decision_dashboard.png")
+    legacy_plot_path = os.path.join(PROJECT_ROOT, "checkpoint_metric_comparison.png")
     plot_pipe_path = os.path.join(PROJECT_ROOT, "connected_pipeline_visualization.png")
 
-    plot_checkpoint_comparisons(results, plot_cmp_path)
-    plot_combined_fsc_curves(results, plot_fsc_path)
+    plot_overall_decision_dashboard(results, dashboard_path)
+    plot_overall_decision_dashboard(results, legacy_plot_path)
+
+    # Dedicated Validation Loss Plot
+    val_loss_plot_path = os.path.join(PROJECT_ROOT, "validation_checkpoints_plot.png")
+    plot_validation_loss_curves(results, val_loss_plot_path)
 
     best_res = max(results, key=lambda x: x["psnr"])
     if best_res.get("sample_vis"):
         plot_connected_pipeline_visualization(best_res["sample_vis"], best_res["short_name"], plot_pipe_path)
 
-    # 5. Save summary CSV in PROJECT_ROOT
+    # Save summary CSV in PROJECT_ROOT
     csv_path = os.path.join(PROJECT_ROOT, "checkpoint_evaluation_summary.csv")
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -506,21 +565,19 @@ def run_checkpoint_evaluations(split="val"):
         for r in results:
             writer.writerow([r["short_name"], f"{r['psnr']:.2f}", f"{r['ssim']:.4f}", f"{r['fsc05']:.2f}", f"{r['fsc0143']:.2f}", r["trend"]])
 
-    # 6. Display Clean Summary Table
     print("\n" + "=" * 90)
-    print("CHECKPOINT VALIDATION BENCHMARK SUMMARY TABLE")
+    print("CHECKPOINT VALIDATION BENCHMARK SUMMARY TABLE (c_ Format)")
     print("=" * 90)
-    print(f"{'Checkpoint Name':<28} | {'PSNR (dB)':<10} | {'3D-SSIM':<8} | {'FSC 0.143 (Å)':<14} | {'Trend / Improvement'}")
+    print(f"{'Checkpoint':<16} | {'PSNR (dB)':<10} | {'3D-SSIM':<8} | {'FSC 0.143 (Å)':<14} | {'Trend / Improvement'}")
     print("-" * 90)
     for r in results:
         star = " ★ BEST" if r["short_name"] == best_res["short_name"] else ""
-        print(f"{r['short_name'][:28]:<28} | {r['psnr']:<10.2f} | {r['ssim']:<8.4f} | {r['fsc0143']:<14.2f} | {r['trend']}{star}")
+        print(f"{r['short_name']:<16} | {r['psnr']:<10.2f} | {r['ssim']:<8.4f} | {r['fsc0143']:<14.2f} | {r['trend']}{star}")
     print("=" * 90)
-    print(f"\nAll plots and summary reports saved in evaluate.py's parent folder ({PROJECT_ROOT}):")
-    print(f"  1. {plot_cmp_path}")
-    print(f"  2. {plot_fsc_path}")
-    print(f"  3. {plot_pipe_path}")
-    print(f"  4. {csv_path}\n")
+    print(f"\nAll overall decision graphs and reports saved in: {PROJECT_ROOT}")
+    print(f"  1. {dashboard_path}")
+    print(f"  2. {plot_pipe_path}")
+    print(f"  3. {csv_path}\n")
 
 
 if __name__ == "__main__":

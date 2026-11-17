@@ -20,7 +20,6 @@ if TRAINING_DIR not in sys.path:
 
 DEFAULT_SR_DIR = os.path.join(PROJECT_ROOT, "result")
 DEFAULT_HR_DIR = os.path.join(PROJECT_ROOT, "Dataset", "HR")
-DEFAULT_PLOT_DIR = os.path.join(PROJECT_ROOT, "plots")
 
 from metrics import calculate_psnr_3d, calculate_ssim_3d, calculate_fsc_3d
 
@@ -63,45 +62,11 @@ def normalize_minmax(vol):
 
 
 # ============================================================
-# FSC PLOTTING HELPER
-# ============================================================
-
-def plot_fsc_curve(fsc_dict, title_name, output_png):
-    """Saves a publication-quality FSC curve plot."""
-    try:
-        freqs = fsc_dict["spatial_frequencies"]
-        fsc = fsc_dict["fsc_curve"]
-        res_05 = fsc_dict["resolution_05"]
-        res_0143 = fsc_dict["resolution_0143"]
-
-        plt.figure(figsize=(7, 4.5), dpi=150)
-        plt.plot(freqs, fsc, color="#0066cc", lw=2, label="FSC (SR vs HR)")
-        plt.axhline(0.5, color="red", linestyle="--", alpha=0.7, label=f"FSC=0.5 ({res_05:.2f} Å)")
-        plt.axhline(0.143, color="green", linestyle="--", alpha=0.7, label=f"FSC=0.143 ({res_0143:.2f} Å)")
-
-        plt.title(f"Fourier Shell Correlation (FSC) - {title_name}", fontsize=12, fontweight="bold")
-        plt.xlabel("Spatial Frequency (1/Å)", fontsize=10)
-        plt.ylabel("Correlation Coefficient", fontsize=10)
-        plt.ylim(-0.1, 1.05)
-        plt.xlim(0, max(freqs) if len(freqs) > 0 else 1)
-        plt.grid(True, linestyle=":", alpha=0.6)
-        plt.legend(loc="upper right", fontsize=9)
-        plt.tight_layout()
-        os.makedirs(os.path.dirname(output_png), exist_ok=True)
-        plt.savefig(output_png)
-        plt.close()
-        return True
-    except Exception as e:
-        print(f"  [Warning] FSC curve plot error: {e}")
-        return False
-
-
-# ============================================================
-# SUMMARY PLOTS IN PARENT FOLDER
+# OVERALL EVALUATION SUMMARY PLOT (NO PER-FILE SPAM)
 # ============================================================
 
 def plot_evaluation_summary(results, output_png):
-    """Generates a connected 3-panel bar dashboard saved directly in evaluate.py's parent folder."""
+    """Generates an overall 3-panel bar dashboard saved directly in evaluate.py's parent folder."""
     try:
         names = [r["name"][:18] for r in results]
         psnrs = [r["psnr"] for r in results]
@@ -110,7 +75,7 @@ def plot_evaluation_summary(results, output_png):
 
         x = np.arange(len(names))
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 5.5), dpi=150)
-        fig.suptitle("3D Cryo-EM Super-Resolution Evaluation Summary (SR vs HR)", fontsize=14, fontweight="bold")
+        fig.suptitle("Overall 3D Cryo-EM Super-Resolution Evaluation Summary (SR vs HR)", fontsize=14, fontweight="bold")
 
         # 1. PSNR
         bars1 = ax1.bar(x, psnrs, color="#2980b9", edgecolor="black", alpha=0.85)
@@ -159,16 +124,15 @@ def plot_evaluation_summary(results, output_png):
 
 
 # ============================================================
-# SINGLE PAIR EVALUATION
+# SINGLE PAIR EVALUATION (NO INDIVIDUAL FILE PLOTS)
 # ============================================================
 
-def evaluate_pair(sr_path, hr_path, plot_dir=None):
+def evaluate_pair(sr_path, hr_path):
     name = os.path.basename(sr_path)
     sr_vol, sr_vox = load_volume_mrc(sr_path)
     hr_vol, hr_vox = load_volume_mrc(hr_path)
 
     if sr_vol.shape != hr_vol.shape:
-        print(f"  [Info] Aligning shapes: SR {sr_vol.shape} -> HR {hr_vol.shape}")
         sr_vol, hr_vol = match_dimensions(sr_vol, hr_vol)
 
     sr_norm = normalize_minmax(sr_vol)
@@ -183,14 +147,7 @@ def evaluate_pair(sr_path, hr_path, plot_dir=None):
     # 3. 3D-FSC
     fsc_dict = calculate_fsc_3d(sr_vol, hr_vol, voxel_size_angstrom=hr_vox)
 
-    plot_saved = None
-    if plot_dir:
-        os.makedirs(plot_dir, exist_ok=True)
-        base_clean = os.path.splitext(name)[0]
-        plot_path = os.path.join(plot_dir, f"fsc_curve_{base_clean}.png")
-        if plot_fsc_curve(fsc_dict, base_clean, plot_path):
-            plot_saved = plot_path
-
+    # Individual per-file PNGs are omitted to prevent clutter
     return {
         "name": name,
         "shape": sr_vol.shape,
@@ -198,8 +155,7 @@ def evaluate_pair(sr_path, hr_path, plot_dir=None):
         "psnr": psnr_val,
         "ssim": ssim_val,
         "res_05": fsc_dict["resolution_05"],
-        "res_0143": fsc_dict["resolution_0143"],
-        "plot_path": plot_saved
+        "res_0143": fsc_dict["resolution_0143"]
     }
 
 
@@ -209,13 +165,12 @@ def evaluate_pair(sr_path, hr_path, plot_dir=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Comprehensive 3D Cryo-EM Super-Resolution Evaluation (3D-PSNR, 3D-SSIM, 3D-FSC, Checkpoint Benchmark)"
+        description="Comprehensive 3D Cryo-EM Super-Resolution Evaluation (Overall Benchmark)"
     )
     parser.add_argument("--sr", type=str, default=None, help="Path to a single Super-Resolved (.mrc) file")
     parser.add_argument("--hr", type=str, default=None, help="Path to the corresponding Ground-Truth HR (.mrc) file")
     parser.add_argument("--sr_dir", type=str, default=DEFAULT_SR_DIR, help=f"Directory containing SR output files (default: {DEFAULT_SR_DIR})")
     parser.add_argument("--hr_dir", type=str, default=DEFAULT_HR_DIR, help=f"Directory containing HR reference files (default: {DEFAULT_HR_DIR})")
-    parser.add_argument("--plot_dir", type=str, default=DEFAULT_PLOT_DIR, help=f"Directory to save FSC curve plots (default: {DEFAULT_PLOT_DIR})")
     parser.add_argument("--eval_checkpoints", action="store_true", help="Evaluate all model checkpoints and generate progress comparison graphs")
     args = parser.parse_args()
 
@@ -225,7 +180,7 @@ def main():
         return
 
     print("=" * 70)
-    print("3D CRYO-EM SUPER-RESOLUTION EVALUATION PIPELINE")
+    print("3D CRYO-EM SUPER-RESOLUTION OVERALL EVALUATION PIPELINE")
     print("=" * 70)
 
     # Mode 1: Evaluate a single pair
@@ -235,7 +190,7 @@ def main():
         if not os.path.exists(args.hr):
             raise FileNotFoundError(f"HR file not found: {args.hr}")
 
-        res = evaluate_pair(args.sr, args.hr, plot_dir=args.plot_dir)
+        res = evaluate_pair(args.sr, args.hr)
         print("\n" + "-" * 70)
         print(f"File Name                  : {res['name']}")
         print(f"3D Volume Dimensions       : {res['shape']}")
@@ -245,8 +200,6 @@ def main():
         print(f"2. 3D-SSIM (Structure Sim) : {res['ssim']:.4f}      (Range: 0 to 1.0, Higher is better)")
         print(f"3. FSC Cutoff @ 0.500      : {res['res_05']:.2f} Å    (Conservative resolution)")
         print(f"4. FSC Cutoff @ 0.143      : {res['res_0143']:.2f} Å  (Cryo-EM Gold Standard)")
-        if res['plot_path']:
-            print(f"   FSC Plot Saved at       : {res['plot_path']}")
         print("=" * 70)
         return
 
@@ -287,7 +240,6 @@ def main():
                 break
 
         if match is None:
-            print(f"  [Skipping] No matching HR file found for: {sf}")
             continue
 
         sr_path = os.path.join(args.sr_dir, sf)
@@ -295,7 +247,7 @@ def main():
 
         print(f"Evaluating: {sf} <---> {match}")
         try:
-            r = evaluate_pair(sr_path, hr_path, plot_dir=args.plot_dir)
+            r = evaluate_pair(sr_path, hr_path)
             results.append(r)
         except Exception as e:
             print(f"  [Error] Failed to evaluate {sf}: {e}")
@@ -333,9 +285,8 @@ def main():
             writer.writerow([r["name"], f"{r['psnr']:.2f}", f"{r['ssim']:.4f}", f"{r['res_05']:.2f}", f"{r['res_0143']:.2f}"])
         writer.writerow(["OVERALL AVERAGE", f"{avg_psnr:.2f}", f"{avg_ssim:.4f}", f"{avg_fsc05:.2f}", f"{avg_fsc0143:.2f}"])
 
-    print(f"Summary Evaluation Graph saved in evaluate.py's parent folder: {summary_plot_path}")
-    print(f"Summary Evaluation CSV saved in: {csv_summary_path}")
-    print(f"Individual FSC curve plots saved in: {args.plot_dir}\n")
+    print(f"Overall Summary Graph saved in evaluate.py's parent folder: {summary_plot_path}")
+    print(f"Overall Summary CSV saved in: {csv_summary_path}\n")
 
 
 if __name__ == "__main__":

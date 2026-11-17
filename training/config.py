@@ -12,6 +12,11 @@ DATASET_DIR = os.path.join(PROJECT_ROOT, "Dataset")
 HR_PATH = os.path.join(DATASET_DIR, "HR")
 LR_PATH = os.path.join(DATASET_DIR, "LR")
 
+# Dedicated Validation Directory
+VAL_DIR = os.path.join(DATASET_DIR, "Validation")
+VAL_HR_PATH = os.path.join(VAL_DIR, "HR")
+VAL_LR_PATH = os.path.join(VAL_DIR, "LR")
+
 MODEL_PATH = os.path.join(PROJECT_ROOT, "model")
 RESULT_PATH = os.path.join(PROJECT_ROOT, "result")
 INPUT_PATH = os.path.join(PROJECT_ROOT, "input")
@@ -32,8 +37,8 @@ NUM_WORKERS = 0
 # Split definitions:
 # Out of 19 Cryo-EM MRC volumes:
 # - Training set: 13 volumes
-# - Validation set: 3 volumes (evaluated after each epoch/checkpoint)
-# - Testing set: 3 volumes (unseen test holdout)
+# - Validation set: 3 volumes (emd_7081, emd_7769, emd_8923) in Dataset/Validation/
+# - Testing set: 3 volumes (emd_8983, emd_9718, emd_10064)
 VAL_SPLIT_FILES = ["emd_7081", "emd_7769", "emd_8923"]
 TEST_SPLIT_FILES = ["emd_8983", "emd_9718", "emd_10064"]
 
