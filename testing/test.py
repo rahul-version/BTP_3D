@@ -42,7 +42,7 @@ RESULT_PATH = os.path.join(
 MODEL_PATH = os.path.join(
     PROJECT_ROOT,
     "model",
-    "checkpoint_300.pt"
+    "checkpoint_600.pt"
 )
 # SETTINGS
 SCALE = 4
