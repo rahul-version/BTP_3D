@@ -22,3 +22,7 @@ datasets/
 
 # Editor files
 .vscode/
+*.pt
+*.pth
+*.mrc
+*.mrcs

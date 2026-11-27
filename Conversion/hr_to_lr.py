@@ -57,7 +57,7 @@ def save_mrc(output_path, volume, voxel_size):
 
 
 # NOISE AND DEGRADATION FUNCTIONS
-def add_gaussian_noise(volume, noise_level=0.20, relative=True):
+def add_gaussian_noise(volume, noise_level=0.60, relative=True):
     """
     Adds Additive White Gaussian Noise (AWGN) in float32 directly.
     Prevents float64 memory spikes that cause MemoryError on large Cryo-EM volumes.
@@ -198,7 +198,7 @@ def process_file(
     scale=4,
     method="area",
     noise_type="gaussian",
-    noise_level=0.20,
+    noise_level=0.60,
     noise_order="after_downsample",
     apply_blur=False,
     blur_sigma=1.0,
@@ -319,7 +319,7 @@ def main():
     parser.add_argument(
         "--noise_level",
         type=float,
-        default=0.20,
+        default=0.60,
         help="Relative standard deviation of Gaussian noise (default: 0.05, i.e., 5%% of volume std)"
     )
     parser.add_argument(

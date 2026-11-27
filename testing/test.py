@@ -40,7 +40,7 @@ RESULT_PATH = os.path.join(
 MODEL_PATH = os.path.join(
     PROJECT_ROOT,
     "model",
-    "checkpoint_1200.pt"
+    "checkpoint_360.pt"
 )
 
 # Alternative fallback checkpoints if pre_trained_model_final.pt isn't present
@@ -342,16 +342,30 @@ def main():
             overlap=args.overlap
         )
     else:
-        files = sorted([f for f in os.listdir(args.input) if f.lower().endswith(".mrc")])
+        input_dir = args.input
+        os.makedirs(input_dir, exist_ok=True)
+        files = sorted([f for f in os.listdir(input_dir) if f.lower().endswith(".mrc")])
         if len(files) == 0:
-            raise RuntimeError(f"No .mrc files found in {args.input}")
-        print(f"Total MRC volumes to process: {len(files)}")
+            test_lr_dir = os.path.join(PROJECT_ROOT, "Dataset", "Test", "LR")
+            dataset_lr_dir = os.path.join(PROJECT_ROOT, "Dataset", "LR")
+            if os.path.exists(test_lr_dir) and len([f for f in os.listdir(test_lr_dir) if f.lower().endswith(".mrc")]) > 0:
+                input_dir = test_lr_dir
+                files = sorted([f for f in os.listdir(input_dir) if f.lower().endswith(".mrc")])
+                print(f"[Notice] '{args.input}' was empty. Reading from Test split: {input_dir}")
+            elif os.path.exists(dataset_lr_dir) and len([f for f in os.listdir(dataset_lr_dir) if f.lower().endswith(".mrc")]) > 0:
+                input_dir = dataset_lr_dir
+                files = sorted([f for f in os.listdir(input_dir) if f.lower().endswith(".mrc")])
+                print(f"[Notice] '{args.input}' was empty. Reading from Dataset LR: {input_dir}")
+            else:
+                raise RuntimeError(f"No .mrc files found in '{args.input}' or fallback directories.")
+
+        print(f"Total MRC volumes to process: {len(files)} (from {input_dir})")
         for f in files:
             process_file(
                 f,
                 generator=generator,
                 device=device,
-                input_dir=args.input,
+                input_dir=input_dir,
                 result_dir=args.output,
                 tile_size=args.tile_size,
                 overlap=args.overlap

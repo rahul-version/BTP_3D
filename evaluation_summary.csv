@@ -1,0 +1,4 @@
+Volume Name,3D-PSNR (dB),3D-SSIM,FSC 0.5 (Å),FSC 0.143 (Å)
+emd_49066.map_mask_lr_SR.mrc,13.06,0.7959,9.02,5.25
+emd_47349.map_mask_lr_SR.mrc,18.01,0.9434,7.99,5.01
+OVERALL AVERAGE,15.53,0.8697,8.50,5.13

@@ -23,6 +23,8 @@ DEFAULT_HR_DIR = os.path.join(PROJECT_ROOT, "Dataset", "HR")
 
 from metrics import calculate_psnr_3d, calculate_ssim_3d, calculate_fsc_3d
 
+DEFAULT_RESULT_DIR = os.path.join(PROJECT_ROOT, "result")
+
 
 # ============================================================
 # MRC I/O & PREPROCESSING
@@ -59,6 +61,65 @@ def normalize_minmax(vol):
     if vmax - vmin < 1e-8:
         return np.zeros_like(vol, dtype=np.float32)
     return ((vol - vmin) / (vmax - vmin)) * 2.0 - 1.0
+
+
+# ============================================================
+# FSC CURVE PLOT (SR vs HR per volume)
+# ============================================================
+
+def plot_fsc_curve(fsc_dict, volume_name, output_png):
+    """
+    Saves a clean FSC curve plot for a single SR/HR volume pair.
+
+    Args:
+        fsc_dict  : dict returned by calculate_fsc_3d()
+        volume_name : str label for the plot title
+        output_png  : absolute path to save the PNG
+    """
+    freqs = np.array(fsc_dict["spatial_frequencies"])
+    fsc   = np.array(fsc_dict["fsc_curve"])
+    res_05   = fsc_dict["resolution_05"]
+    res_0143 = fsc_dict["resolution_0143"]
+    nyquist  = fsc_dict["nyquist_resolution"]
+
+    # Convert frequency axis to resolution (Å) for readability, skip zero-freq
+    with np.errstate(divide="ignore"):
+        res_axis = np.where(freqs > 0, 1.0 / freqs, np.inf)
+
+    # Sort by ascending frequency (descending resolution)
+    sort_idx = np.argsort(freqs)
+    freqs_sorted = freqs[sort_idx]
+    fsc_sorted   = fsc[sort_idx]
+
+    fig, ax = plt.subplots(figsize=(9, 5), dpi=150)
+
+    ax.plot(freqs_sorted, fsc_sorted, color="#2980b9", lw=2, label="FSC (SR vs HR)")
+    ax.axhline(0.5,   color="#e67e22", lw=1.4, linestyle="--", label=f"0.5 threshold  → {res_05:.2f} Å")
+    ax.axhline(0.143, color="#c0392b", lw=1.4, linestyle=":",  label=f"0.143 threshold → {res_0143:.2f} Å")
+    ax.axhline(0.0,   color="gray",    lw=0.8, linestyle="-",  alpha=0.4)
+
+    ax.set_xlim(left=0)
+    ax.set_ylim(-0.05, 1.05)
+    ax.set_xlabel("Spatial Frequency (1/Å)", fontsize=11)
+    ax.set_ylabel("FSC", fontsize=11)
+    ax.set_title(f"Fourier Shell Correlation — {volume_name}", fontsize=12, fontweight="bold")
+    ax.legend(fontsize=9, loc="upper right")
+    ax.grid(True, linestyle=":", alpha=0.5)
+
+    # Secondary x-axis showing resolution in Å
+    ax2 = ax.twiny()
+    tick_res = [100, 20, 10, 7, 5, 4, 3, 2.5, 2.0]
+    tick_freq = [1.0 / r for r in tick_res if 1.0 / r <= freqs_sorted.max()]
+    tick_lbl  = [f"{r}Å" for r in tick_res if 1.0 / r <= freqs_sorted.max()]
+    ax2.set_xlim(ax.get_xlim())
+    ax2.set_xticks(tick_freq)
+    ax2.set_xticklabels(tick_lbl, fontsize=8)
+    ax2.set_xlabel("Resolution (Å)", fontsize=10)
+
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(output_png), exist_ok=True)
+    plt.savefig(output_png)
+    plt.close()
 
 
 # ============================================================
@@ -147,7 +208,6 @@ def evaluate_pair(sr_path, hr_path):
     # 3. 3D-FSC
     fsc_dict = calculate_fsc_3d(sr_vol, hr_vol, voxel_size_angstrom=hr_vox)
 
-    # Individual per-file PNGs are omitted to prevent clutter
     return {
         "name": name,
         "shape": sr_vol.shape,
@@ -155,7 +215,8 @@ def evaluate_pair(sr_path, hr_path):
         "psnr": psnr_val,
         "ssim": ssim_val,
         "res_05": fsc_dict["resolution_05"],
-        "res_0143": fsc_dict["resolution_0143"]
+        "res_0143": fsc_dict["resolution_0143"],
+        "fsc_dict": fsc_dict
     }
 
 
@@ -276,6 +337,38 @@ def main():
     # Save summary plot and CSV in PROJECT_ROOT (parent folder of evaluate.py)
     summary_plot_path = os.path.join(PROJECT_ROOT, "evaluation_metrics_summary.png")
     plot_evaluation_summary(results, summary_plot_path)
+
+    # Save combined FSC overlay plot (all volumes on one chart)
+    combined_fsc_path = os.path.join(PROJECT_ROOT, "fsc_all_volumes.png")
+    try:
+        fig_c, ax_c = plt.subplots(figsize=(10, 5.5), dpi=150)
+        colors = ["#2980b9", "#27ae60", "#8e44ad", "#e67e22", "#c0392b", "#16a085"]
+        for i, r in enumerate(results):
+            if "fsc_dict" not in r:
+                continue
+            fd = r["fsc_dict"]
+            freqs_s = np.array(fd["spatial_frequencies"])
+            fsc_s   = np.array(fd["fsc_curve"])
+            sort_idx = np.argsort(freqs_s)
+            lbl = os.path.splitext(r["name"])[0][:20]
+            ax_c.plot(freqs_s[sort_idx], fsc_s[sort_idx],
+                      color=colors[i % len(colors)], lw=1.8, label=lbl)
+        ax_c.axhline(0.5,   color="#e67e22", lw=1.3, linestyle="--", label="0.5 threshold")
+        ax_c.axhline(0.143, color="#c0392b", lw=1.3, linestyle=":",  label="0.143 threshold")
+        ax_c.axhline(0.0,   color="gray",    lw=0.8, linestyle="-",  alpha=0.4)
+        ax_c.set_xlim(left=0)
+        ax_c.set_ylim(-0.05, 1.05)
+        ax_c.set_xlabel("Spatial Frequency (1/Å)", fontsize=11)
+        ax_c.set_ylabel("FSC", fontsize=11)
+        ax_c.set_title("FSC Curves — All Evaluated Volumes (SR vs HR)", fontsize=12, fontweight="bold")
+        ax_c.legend(fontsize=8, loc="upper right")
+        ax_c.grid(True, linestyle=":", alpha=0.5)
+        plt.tight_layout()
+        plt.savefig(combined_fsc_path)
+        plt.close()
+        print(f"Combined FSC plot saved: {combined_fsc_path}")
+    except Exception as e:
+        print(f"  [Warning] Could not save combined FSC plot: {e}")
 
     csv_summary_path = os.path.join(PROJECT_ROOT, "evaluation_summary.csv")
     with open(csv_summary_path, mode="w", newline="", encoding="utf-8") as f:

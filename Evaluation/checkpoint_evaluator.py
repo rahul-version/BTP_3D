@@ -404,6 +404,9 @@ def replot_from_csv(csv_path=None):
                 continue
             
             c_label = to_c_name(raw_name)
+            # Skip non-numbered alias checkpoints (final, best, latest, pre)
+            if not c_label[2:].isdigit() if c_label.startswith("c_") else True:
+                continue
             try:
                 psnr = float(r.get("PSNR (dB)", 0))
                 ssim = float(r.get("3D-SSIM", 0))
@@ -501,7 +504,11 @@ def run_checkpoint_evaluations(split="val"):
     print(f"Evaluating across {len(pairs)} {split.upper()} volume pairs:\n" + "\n".join([f"  - {os.path.basename(p[0])} <-> {os.path.basename(p[1])}" for p in pairs]) + "\n")
 
     raw_checkpoints = glob.glob(os.path.join(MODEL_PATH, "*.pt"))
-    checkpoints = [c for c in raw_checkpoints if "discriminator" not in os.path.basename(c).lower()]
+    checkpoints = [
+        c for c in raw_checkpoints
+        if "discriminator" not in os.path.basename(c).lower()
+        and os.path.basename(c).startswith("checkpoint_")
+    ]
     checkpoints.sort(key=get_checkpoint_sort_key)
 
     if len(checkpoints) == 0:
