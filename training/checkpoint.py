@@ -314,7 +314,7 @@ def main():
         save_checkpoint(generator, GENERATOR_FINAL)
         save_checkpoint(discriminator, DISCRIMINATOR_FINAL)
 
-        # Save checkpoint 300 (100 training + 200 fine tuning)
+        # Save checkpoint 30 (30 training + 30 fine tuning)
         total_epochs = PRE_TRAIN_EPOCH + FINE_TRAIN_EPOCH
         checkpoint_filename = f"checkpoint_{total_epochs}.pt"
         checkpoint_path = os.path.join(MODEL_PATH, checkpoint_filename)

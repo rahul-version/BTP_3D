@@ -52,11 +52,11 @@ NUM_D_BLOCK = 3
 # TRAINING
 # ============================================================
 
-PRE_TRAIN_EPOCH = 100
+PRE_TRAIN_EPOCH = 30
 
-FINE_TRAIN_EPOCH = 200
+FINE_TRAIN_EPOCH = 30
 
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 5e-4
 
 
 # ============================================================

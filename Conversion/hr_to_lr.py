@@ -14,8 +14,8 @@ import torch.nn.functional as F
 # ============================================================
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_HR_DIR = os.path.join(SCRIPT_DIR, "HR")
-DEFAULT_LR_DIR = os.path.join(SCRIPT_DIR, "LR2")
+DEFAULT_HR_DIR = os.path.join(SCRIPT_DIR, "../Dataset/HR")
+DEFAULT_LR_DIR = os.path.join(SCRIPT_DIR, "../Dataset/LR")
 
 
 # ============================================================
@@ -27,12 +27,23 @@ def load_mrc(path):
     Safely loads 3D volume data and voxel dimensions from an MRC file.
     """
     with mrcfile.open(path, mode="r", permissive=True) as mrc:
+        if mrc.data is None:
+            raise ValueError(f"MRC file data is empty or unreadable: {path}")
+
         data = np.asarray(mrc.data, dtype=np.float32).copy()
-        voxel_size = (
-            float(mrc.voxel_size.x),
-            float(mrc.voxel_size.y),
-            float(mrc.voxel_size.z)
-        )
+
+        # Handle voxel size safely (protect against missing/zero voxels)
+        try:
+            vx = float(mrc.voxel_size.x)
+            vy = float(mrc.voxel_size.y)
+            vz = float(mrc.voxel_size.z)
+            if vx <= 0.0 or vy <= 0.0 or vz <= 0.0:
+                voxel_size = (1.0, 1.0, 1.0)
+            else:
+                voxel_size = (vx, vy, vz)
+        except Exception:
+            voxel_size = (1.0, 1.0, 1.0)
+
     return data, voxel_size
 
 
@@ -54,9 +65,8 @@ def save_mrc(output_path, volume, voxel_size):
 
 def add_gaussian_noise(volume, noise_level=0.05, relative=True):
     """
-    Adds Additive White Gaussian Noise (AWGN).
-    If relative is True, noise std is (noise_level * signal_std).
-    Example: noise_level=0.05 adds 5% noise.
+    Adds Additive White Gaussian Noise (AWGN) in float32 directly.
+    Prevents float64 memory spikes that cause MemoryError on large Cryo-EM volumes.
     """
     if noise_level <= 0.0:
         return volume
@@ -67,8 +77,12 @@ def add_gaussian_noise(volume, noise_level=0.05, relative=True):
     else:
         sigma = float(noise_level)
 
-    noise = np.random.normal(0.0, sigma, size=volume.shape).astype(np.float32)
-    return volume + noise
+    # Generate noise in float32 directly to save RAM
+    noise = np.random.standard_normal(size=volume.shape).astype(np.float32)
+    noise *= np.float32(sigma)
+    volume += noise
+    del noise
+    return volume
 
 
 def add_poisson_noise(volume, peak_factor=100.0):
@@ -137,6 +151,10 @@ def downsample_volume(volume, scale=4, method="area"):
     - 'area': Average pooling / box binning (ideal anti-aliasing for cryo-EM voxel binning).
     - 'trilinear': 3D trilinear interpolation.
     """
+    volume = np.squeeze(volume)
+    if volume.ndim != 3:
+        raise ValueError(f"Expected 3D volume, but got shape {volume.shape} (ndim={volume.ndim})")
+
     d, h, w = volume.shape
 
     # Crop boundary voxels if dimension is not divisible by scale
@@ -144,9 +162,14 @@ def downsample_volume(volume, scale=4, method="area"):
     h_crop = (h // scale) * scale
     w_crop = (w // scale) * scale
 
+    if d_crop < scale or h_crop < scale or w_crop < scale:
+        raise ValueError(f"Volume dimensions ({d}, {h}, {w}) too small for {scale}x downsampling.")
+
     if (d_crop, h_crop, w_crop) != (d, h, w):
         print(f"    [Info] Cropping ({d}, {h}, {w}) -> ({d_crop}, {h_crop}, {w_crop}) for integer {scale}x downsampling")
-        volume = volume[:d_crop, :h_crop, :w_crop]
+        volume = np.ascontiguousarray(volume[:d_crop, :h_crop, :w_crop])
+    else:
+        volume = np.ascontiguousarray(volume)
 
     out_d = d_crop // scale
     out_h = h_crop // scale
@@ -190,18 +213,24 @@ def process_file(
     noise_level=0.05,
     noise_order="after_downsample",
     apply_blur=False,
-    blur_sigma=1.0
+    blur_sigma=1.0,
+    overwrite=False
 ):
     hr_path = os.path.join(hr_dir, filename)
 
     # Naming convention: ensure output file has '_lr.mrc' suffix
     base_name, ext = os.path.splitext(filename)
     if not base_name.endswith("_lr"):
-        out_filename = f"{base_name}_lr{ext}"
+        out_filename = f"{base_name}_lr.mrc"
     else:
-        out_filename = filename
+        out_filename = f"{base_name}.mrc"
 
     out_path = os.path.join(output_dir, out_filename)
+
+    # Skip if already exists and overwrite is False
+    if not overwrite and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+        print(f"\n--> [Skipped] Already exists: {out_filename}", flush=True)
+        return
 
     print(f"\n--> Processing: {filename}", flush=True)
     t0 = time.time()
@@ -337,6 +366,11 @@ def main():
         default=None,
         help="Limit the number of files to process (optional)"
     )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing LR files instead of skipping them"
+    )
 
     args = parser.parse_args()
 
@@ -352,6 +386,7 @@ def main():
         print(f"Noise Level (std)  : {args.noise_level} ({args.noise_level * 100:.1f}% relative)")
     print(f"Noise Order        : {args.noise_order}")
     print(f"Pre-Blur           : {args.blur} (sigma={args.blur_sigma if args.blur else 'N/A'})")
+    print(f"Overwrite Existing : {args.overwrite}")
     print("=" * 65)
 
     if not os.path.exists(args.hr_dir):
@@ -359,42 +394,57 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # Collect .mrc files
+    # Collect .mrc, .map, .ccp4, .mrcs files
+    valid_extensions = (".mrc", ".map", ".ccp4", ".mrcs")
     if args.file:
         files = [args.file]
     else:
         files = sorted([
             f for f in os.listdir(args.hr_dir)
-            if f.lower().endswith(".mrc")
+            if any(f.lower().endswith(ext) for ext in valid_extensions)
         ])
 
     if len(files) == 0:
-        raise RuntimeError(f"No .mrc files found in HR directory: {args.hr_dir}")
+        raise RuntimeError(f"No valid Cryo-EM map files found in HR directory: {args.hr_dir}")
 
     if args.max_files is not None:
         files = files[:args.max_files]
 
-    print(f"Found {len(files)} MRC file(s) to process.")
+    print(f"Found {len(files)} file(s) in HR directory to process.")
 
     total_start = time.time()
+    success_count = 0
+    failed_files = []
+
     for idx, fname in enumerate(files, 1):
-        print(f"[{idx}/{len(files)}] Processing {fname}...")
-        process_file(
-            filename=fname,
-            hr_dir=args.hr_dir,
-            output_dir=args.output_dir,
-            scale=args.scale,
-            method=args.method,
-            noise_type=args.noise_type,
-            noise_level=args.noise_level,
-            noise_order=args.noise_order,
-            apply_blur=args.blur,
-            blur_sigma=args.blur_sigma
-        )
+        print(f"\n[{idx}/{len(files)}] Processing {fname}...", flush=True)
+        try:
+            process_file(
+                filename=fname,
+                hr_dir=args.hr_dir,
+                output_dir=args.output_dir,
+                scale=args.scale,
+                method=args.method,
+                noise_type=args.noise_type,
+                noise_level=args.noise_level,
+                noise_order=args.noise_order,
+                apply_blur=args.blur,
+                blur_sigma=args.blur_sigma,
+                overwrite=args.overwrite
+            )
+            success_count += 1
+        except Exception as e:
+            print(f"    [FAILED] Error processing {fname}: {e}", flush=True)
+            failed_files.append((fname, str(e)))
+            continue
 
     total_time = time.time() - total_start
     print("\n" + "=" * 65)
-    print(f"ALL FILES PROCESSED SUCCESSFULLY in {total_time:.2f}s")
+    print(f"COMPLETED: {success_count}/{len(files)} files processed successfully in {total_time:.2f}s")
+    if failed_files:
+        print(f"\nWARNING: {len(failed_files)} file(s) failed with errors:")
+        for fname, err in failed_files:
+            print(f"  - {fname}: {err}")
     print(f"Results saved to: {args.output_dir}")
     print("=" * 65)
 
